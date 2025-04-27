@@ -1,0 +1,146 @@
+Hardware Simulation
+Purpose: Implements the ESP32-based smart pad described in the Process Flow, simulating menu navigation, item selection, order finalization, and cancellation.
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
+const char* mqtt_server = "YOUR_MQTT_BROKER";
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+const int button1 = 14; // Menu access
+const int button2 = 27; // Select/Add to cart
+const int button3 = 26; // Scroll up/Increment
+const int button4 = 25; // Scroll down/Decrement
+
+String menuItems[] = {"Burger", "Pizza", "Salad", "Pasta"};
+int currentItem = 0;
+int quantity = 1;
+String cart = "";
+bool inQuantityMode = false;
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(button1, INPUT_PULLUP);
+  pinMode(button2, INPUT_PULLUP);
+  pinMode(button3, INPUT_PULLUP);
+  pinMode(button4, INPUT_PULLUP);
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("OLED failed");
+    for(;;);
+  }
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println("Bistro 92");
+  display.display();
+
+  setup_wifi();
+  client.setServer(mqtt_server, 1883);
+}
+
+void setup_wifi() {
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("WiFi connected");
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    if (client.connect("ESP32Client")) {
+      Serial.println("MQTT connected");
+    } else {
+      delay(5000);
+    }
+  }
+}
+
+void loop() {
+  if (!client.connected()) reconnect();
+  client.loop();
+
+  if (digitalRead(button1) == LOW) {
+    cart = "";
+    inQuantityMode = false;
+    currentItem = 0;
+    displayMenu();
+    delay(200);
+  }
+
+  if (digitalRead(button2) == LOW) {
+    if (!inQuantityMode) {
+      inQuantityMode = true;
+      displayQuantity();
+    } else {
+      cart += String(menuItems[currentItem]) + ":" + String(quantity) + ",";
+      if (digitalRead(button2) == LOW && millis() > 1000) { // Long press
+        client.publish("bistro92/orders", cart.c_str());
+        display.clearDisplay();
+        display.setCursor(0, 0);
+        display.println("Order Sent!");
+        display.display();
+        cart = "";
+      }
+      inQuantityMode = false;
+      displayMenu();
+    }
+    delay(200);
+  }
+
+  if (digitalRead(button3) == LOW) {
+    if (inQuantityMode) {
+      quantity++;
+      displayQuantity();
+    } else {
+      currentItem = (currentItem + 1) % 4;
+      displayMenu();
+    }
+    delay(200);
+  }
+
+  if (digitalRead(button4) == LOW) {
+    if (inQuantityMode && quantity > 1) {
+      quantity--;
+      displayQuantity();
+    } else {
+      currentItem = (currentItem - 1 + 4) % 4;
+      displayMenu();
+    }
+    delay(200);
+  }
+}
+
+void displayMenu() {
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.println("Menu:");
+  for (int i = 0; i < 4; i++) {
+    if (i == currentItem) display.print("> ");
+    else display.print("  ");
+    display.println(menuItems[i]);
+  }
+  display.display();
+}
+
+void displayQuantity() {
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.println("Quantity for");
+  display.println(menuItems[currentItem]);
+  display.print("Qty: ");
+  display.println(quantity);
+  display.display();
+}
